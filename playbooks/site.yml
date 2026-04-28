@@ -1,0 +1,29 @@
+---
+# 主 playbook：一鍵把 EC2 從零設好
+
+- name: Provision EC2 instances
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: common
+      tags: [common]
+
+    - role: security
+      tags: [security, firewall]
+
+    - role: audit
+      tags: [audit]
+
+    - role: docker
+      tags: [docker]
+
+    - role: nodejs
+      tags: [nodejs, node]
+
+    - role: nginx
+      tags: [nginx, web]
+
+    - role: sftp
+      tags: [sftp]

@@ -1,0 +1,20 @@
+---
+# 部署 / 替換 SSL 憑證
+#
+# 使用方式:
+#   1. 從 GoDaddy 下載新憑證
+#   2. 放到 certs/<domain>/(certificate.crt + ca-bundle.crt + private.key)
+#   3. 執行:
+#        ansible-playbook playbooks/deploy-ssl.yml -e ssl_domain=example.com
+#      限定特定機器:
+#        ansible-playbook playbooks/deploy-ssl.yml -e ssl_domain=example.com --limit web
+#      Dry run:
+#        ansible-playbook playbooks/deploy-ssl.yml -e ssl_domain=example.com --check
+
+- name: Deploy SSL certificate from GoDaddy
+  hosts: web
+  become: true
+  gather_facts: false
+
+  roles:
+    - role: nginx_ssl

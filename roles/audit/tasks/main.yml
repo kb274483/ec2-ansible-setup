@@ -1,0 +1,92 @@
+---
+# audit:系統操作稽核
+#  - auditd:記錄 sudo / 登入 / 重要檔案修改 / 提權
+#  - shell history:強化 bash history 留存(時間戳、即時寫入、不截斷)
+
+- name: Install auditd and audit tools
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+
+- name: Ensure auditd is started and enabled
+  ansible.builtin.service:
+    name: auditd
+    state: started
+    enabled: true
+
+- name: Deploy custom audit rules
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/99-custom.rules
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      # Managed by Ansible - audit role
+
+      # 監控重要設定檔(被讀取或修改都記)
+      -w /etc/passwd          -p wa -k identity
+      -w /etc/group           -p wa -k identity
+      -w /etc/shadow          -p wa -k identity
+      -w /etc/sudoers         -p wa -k privilege
+      -w /etc/sudoers.d/      -p wa -k privilege
+      -w /etc/ssh/sshd_config -p wa -k sshd_config
+
+      # 提權行為
+      -w /usr/bin/sudo        -p x  -k privilege_use
+      -w /usr/bin/su          -p x  -k privilege_use
+      -w /usr/bin/passwd      -p x  -k password_change
+
+      # 套件管理(裝了什麼 / 移除什麼)
+      -w /usr/bin/apt         -p x  -k package_mgmt
+      -w /usr/bin/apt-get     -p x  -k package_mgmt
+      -w /usr/bin/dpkg        -p x  -k package_mgmt
+
+      # cron / systemd 排程被改
+      -w /etc/cron.d/         -p wa -k cron
+      -w /etc/cron.daily/     -p wa -k cron
+      -w /etc/cron.hourly/    -p wa -k cron
+      -w /etc/crontab         -p wa -k cron
+      -w /etc/systemd/        -p wa -k systemd
+
+      # 鎖定規則檔(必須最後一行,避免規則被即時改掉)
+      # 拿掉註解可進入 immutable 模式,要重啟機器才能改規則
+      # -e 2
+  notify: restart auditd
+
+- name: Restart auditd via augenrules (proper way to reload rules)
+  ansible.builtin.command: augenrules --load
+  changed_when: false
+
+# ─────────────────────────────────────────────────────────
+# Shell history 強化:每筆指令加時間戳、即時寫入、不截斷
+# ─────────────────────────────────────────────────────────
+
+- name: Deploy enhanced bash history config
+  ansible.builtin.copy:
+    dest: /etc/profile.d/history.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible - audit role
+      # 強化 bash history 留存,方便事後追查
+
+      # 每筆指令前加上時間戳
+      export HISTTIMEFORMAT="%F %T  "
+
+      # 不截斷
+      export HISTSIZE=100000
+      export HISTFILESIZE=100000
+
+      # 不記錄重複/空白開頭的指令
+      export HISTCONTROL=ignoredups:ignorespace
+
+      # 每下一個指令就寫進 history file(預設是 logout 才寫,session crash 會掉)
+      shopt -s histappend
+      export PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}history -a"
+
+      # 把 history 檔做唯一附加:即使使用者想清也清不掉(需要 root)
+      # 這行如果開了,使用者就不能 `history -c`
+      # readonly HISTFILE

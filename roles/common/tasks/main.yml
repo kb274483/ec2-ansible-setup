@@ -1,0 +1,117 @@
+---
+# common：系統基礎設定
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Upgrade all packages
+  ansible.builtin.apt:
+    upgrade: dist
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - git
+      - vim
+      - htop
+      - unzip
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      - build-essential
+      - python3-pip
+    state: present
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Ensure deploy group exists
+  ansible.builtin.group:
+    name: "{{ deploy_user }}"
+    state: present
+
+- name: Create deploy user
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    groups: "{{ deploy_user_groups }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Allow deploy user passwordless sudo
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ deploy_user }}"
+    content: "{{ deploy_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+
+- name: Add SSH authorized keys for deploy user
+  ansible.posix.authorized_key:
+    user: "{{ deploy_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ deploy_authorized_keys }}"
+  when: deploy_authorized_keys | length > 0
+
+- name: Check if swap file exists
+  ansible.builtin.stat:
+    path: /swapfile
+  register: swap_file
+  when: swap_size_gb | int > 0
+
+- name: Create swap file
+  ansible.builtin.command: "fallocate -l {{ swap_size_gb }}G /swapfile"
+  args:
+    creates: /swapfile
+  when:
+    - swap_size_gb | int > 0
+    - not swap_file.stat.exists
+
+- name: Set swap file permissions
+  ansible.builtin.file:
+    path: /swapfile
+    mode: "0600"
+  when: swap_size_gb | int > 0
+
+- name: Format swap file
+  ansible.builtin.command: mkswap /swapfile
+  args:
+    creates: /var/cache/swap.formatted
+  when:
+    - swap_size_gb | int > 0
+    - not swap_file.stat.exists
+
+- name: Mark swap formatted
+  ansible.builtin.file:
+    path: /var/cache/swap.formatted
+    state: touch
+    mode: "0644"
+  when:
+    - swap_size_gb | int > 0
+    - not swap_file.stat.exists
+
+- name: Enable swap
+  ansible.builtin.command: swapon /swapfile
+  when:
+    - swap_size_gb | int > 0
+    - ansible_swaptotal_mb | default(0) | int < 100
+  register: swap_enabled
+  changed_when: swap_enabled.rc == 0
+  failed_when: false
+
+- name: Persist swap in fstab
+  ansible.posix.mount:
+    name: none
+    src: /swapfile
+    fstype: swap
+    opts: sw
+    state: present
+  when: swap_size_gb | int > 0

@@ -1,0 +1,24 @@
+# Inventory（含真實 IP / 金鑰路徑）
+inventory/hosts.ini
+
+# Ansible
+*.retry
+.vault_pass
+*.vault
+
+# 編輯器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# SSL 憑證(私鑰絕對不能進 git!)
+certs/*
+!certs/README.md
+!certs/.gitkeep

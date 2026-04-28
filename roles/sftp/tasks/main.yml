@@ -1,0 +1,71 @@
+---
+# sftp：用 OpenSSH 內建 SFTP subsystem,加上 chroot jail
+# 使用者只能 SFTP,不能開 shell;且被鎖在自己的家目錄裡
+
+- name: Ensure sftpusers group exists
+  ansible.builtin.group:
+    name: sftpusers
+    state: present
+
+- name: Create SFTP users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    group: sftpusers
+    shell: /usr/sbin/nologin
+    home: "/home/{{ item.name }}"
+    create_home: true
+    state: present
+  loop: "{{ sftp_users }}"
+  when: sftp_users | length > 0
+
+# chroot 目錄(= 使用者家目錄)必須 root:root + 755,否則 sshd 會拒絕登入
+- name: Set ownership on SFTP user home (chroot requires root-owned)
+  ansible.builtin.file:
+    path: "/home/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ sftp_users }}"
+  when: sftp_users | length > 0
+
+# 真正可寫入的子目錄(因為 chroot 根目錄不能由使用者寫)
+- name: Create writable upload dir for each SFTP user
+  ansible.builtin.file:
+    path: "/home/{{ item.name }}/upload"
+    state: directory
+    owner: "{{ item.name }}"
+    group: sftpusers
+    mode: "0755"
+  loop: "{{ sftp_users }}"
+  when: sftp_users | length > 0
+
+- name: Add authorized SSH keys for SFTP users
+  ansible.posix.authorized_key:
+    user: "{{ item.0.name }}"
+    key: "{{ item.1 }}"
+    state: present
+  loop: "{{ sftp_users | subelements('authorized_keys', skip_missing=True) }}"
+  when: sftp_users | length > 0
+
+# 把 SFTP chroot 規則寫成獨立檔案,從 sshd_config 引入,避免改壞主檔
+- name: Deploy sshd SFTP config drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/sftp.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible - sftp role
+      Subsystem sftp internal-sftp
+
+      Match Group sftpusers
+          ChrootDirectory %h
+          ForceCommand internal-sftp
+          AllowTcpForwarding no
+          X11Forwarding no
+          PasswordAuthentication no
+  notify: restart sshd
+
+- name: Validate sshd config before reload
+  ansible.builtin.command: sshd -t
+  changed_when: false

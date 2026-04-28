@@ -1,0 +1,7 @@
+---
+# 第三方 collection 依賴
+# 安裝：ansible-galaxy collection install -r requirements.yml
+
+collections:
+  - name: community.general
+  - name: ansible.posix

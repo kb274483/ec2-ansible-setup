@@ -1,0 +1,167 @@
+---
+# nginx_ssl:把本機 certs/<domain>/ 的憑證部署到 EC2 並啟用 HTTPS
+#
+# 流程:
+#   1. 確認本機憑證檔都存在
+#   2. 驗證憑證 + 私鑰是同一對(避免上傳到伺服器才發現不匹配)
+#   3. 把憑證 + 中繼合併成 fullchain(Nginx 推薦的格式)
+#   4. 備份舊憑證(時間戳命名,可隨時 rollback)
+#   5. 上傳到 EC2 /etc/nginx/ssl/<domain>/
+#   6. 設權限(私鑰 600 / 憑證 644)
+#   7. 部署 site config 啟用 HTTPS
+#   8. nginx -t 驗證,失敗自動 rollback
+#   9. reload nginx
+
+- name: Assert ssl_domain is set
+  ansible.builtin.assert:
+    that:
+      - ssl_domain is defined
+      - ssl_domain | length > 0
+    fail_msg: "請用 -e ssl_domain=example.com 指定要部署的 domain"
+
+- name: Set local cert paths
+  ansible.builtin.set_fact:
+    _local_cert_dir: "{{ playbook_dir }}/../certs/{{ ssl_domain }}"
+
+- name: Check local cert files exist
+  ansible.builtin.stat:
+    path: "{{ _local_cert_dir }}/{{ item }}"
+  loop:
+    - certificate.crt
+    - ca-bundle.crt
+    - private.key
+  register: _cert_files
+  delegate_to: localhost
+  become: false
+
+- name: Fail if any cert file missing
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: |
+      找不到 {{ item.invocation.module_args.path }}
+      請從 GoDaddy 下載憑證,放到 certs/{{ ssl_domain }}/
+      檔名需符合慣例:certificate.crt / ca-bundle.crt / private.key
+      詳見 certs/README.md
+  loop: "{{ _cert_files.results }}"
+  loop_control:
+    label: "{{ item.invocation.module_args.path | basename }}"
+
+# ─── 本機驗證:憑證跟私鑰是同一對 ───
+- name: Get certificate modulus hash
+  ansible.builtin.shell: |
+    openssl x509 -in {{ _local_cert_dir }}/certificate.crt -noout -modulus | openssl md5
+  register: _cert_hash
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Get private key modulus hash
+  ansible.builtin.shell: |
+    openssl rsa -in {{ _local_cert_dir }}/private.key -noout -modulus 2>/dev/null | openssl md5
+  register: _key_hash
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Verify cert and key match
+  ansible.builtin.assert:
+    that:
+      - _cert_hash.stdout == _key_hash.stdout
+    fail_msg: |
+      ❌ certificate.crt 和 private.key 不是同一對!
+      可能是私鑰弄錯,或 GoDaddy 重新 re-key 後憑證/私鑰不同步。
+    success_msg: "✅ 憑證 + 私鑰匹配"
+
+# ─── 本機檢查有效期 ───
+- name: Show certificate expiry info
+  ansible.builtin.command: >
+    openssl x509 -in {{ _local_cert_dir }}/certificate.crt
+    -noout -subject -issuer -dates
+  register: _cert_info
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Display certificate info
+  ansible.builtin.debug:
+    msg: "{{ _cert_info.stdout_lines }}"
+
+# ─── 部署到 EC2 ───
+- name: Ensure nginx ssl dir exists on remote
+  ansible.builtin.file:
+    path: "/etc/nginx/ssl/{{ ssl_domain }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Backup existing certs (if any)
+  ansible.builtin.shell: |
+    set -e
+    ts=$(date +%Y%m%d-%H%M%S)
+    backup="/etc/nginx/ssl/{{ ssl_domain }}/.backup-${ts}"
+    if [ -f /etc/nginx/ssl/{{ ssl_domain }}/fullchain.crt ]; then
+      mkdir -p "$backup"
+      cp /etc/nginx/ssl/{{ ssl_domain }}/fullchain.crt "$backup/" 2>/dev/null || true
+      cp /etc/nginx/ssl/{{ ssl_domain }}/private.key  "$backup/" 2>/dev/null || true
+      echo "$backup"
+    fi
+  args:
+    executable: /bin/bash
+  register: _backup_result
+  changed_when: _backup_result.stdout != ""
+
+- name: Show backup path
+  ansible.builtin.debug:
+    msg: "舊憑證已備份到:{{ _backup_result.stdout }}"
+  when: _backup_result.stdout != ""
+
+# Nginx 推薦把 site cert + 中繼合併成 fullchain
+- name: Build fullchain locally
+  ansible.builtin.shell: |
+    cat {{ _local_cert_dir }}/certificate.crt {{ _local_cert_dir }}/ca-bundle.crt
+  register: _fullchain
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Upload fullchain certificate
+  ansible.builtin.copy:
+    content: "{{ _fullchain.stdout }}\n"
+    dest: "/etc/nginx/ssl/{{ ssl_domain }}/fullchain.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Upload private key
+  ansible.builtin.copy:
+    src: "{{ _local_cert_dir }}/private.key"
+    dest: "/etc/nginx/ssl/{{ ssl_domain }}/private.key"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true   # 不在 log 裡顯示私鑰內容
+  notify: reload nginx
+
+- name: Deploy SSL site config
+  ansible.builtin.template:
+    src: ssl-site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ ssl_domain }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Enable SSL site
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ ssl_domain }}.conf"
+    dest: "/etc/nginx/sites-enabled/{{ ssl_domain }}.conf"
+    state: link
+  notify: reload nginx
+
+- name: Validate nginx config (rollback if fails)
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  register: _nginx_test
+  failed_when: _nginx_test.rc != 0

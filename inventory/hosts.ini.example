@@ -1,0 +1,14 @@
+# 範本：複製成 hosts.ini 後填入實際資訊
+# cp inventory/hosts.ini.example inventory/hosts.ini
+
+[web]
+# alias  ansible_host=<IP>  ansible_user=<user>  ansible_ssh_private_key_file=<金鑰路徑>
+my-ec2-1 ansible_host=1.2.3.4 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/my-key.pem
+
+[db]
+# my-db-1 ansible_host=5.6.7.8 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/my-key.pem
+
+# group of groups（之後可以針對 all / web / db 分別套用不同設定）
+[ec2:children]
+web
+db

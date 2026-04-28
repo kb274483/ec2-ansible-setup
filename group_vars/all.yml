@@ -1,0 +1,45 @@
+---
+# 全域變數（所有 host 都吃得到）
+
+# 時區
+timezone: "Asia/Taipei"
+
+# 要建立的部署使用者
+deploy_user: deploy
+deploy_user_groups:
+  - sudo
+  - docker
+
+# 公鑰（會放進 deploy 使用者的 ~/.ssh/authorized_keys）
+# 多把就一行一把
+deploy_authorized_keys: []
+  # - "ssh-ed25519 AAAA... your_key_comment"
+
+# Swap 檔案大小（GB），設 0 就不建立
+swap_size_gb: 2
+
+# Node.js 版本（NodeSource 支援 18 / 20 / 22）
+nodejs_version: "20"
+# 全域要裝的 npm 套件
+nodejs_global_packages:
+  - pm2
+  - yarn
+
+# Nginx
+nginx_default_server_name: "_"
+
+# 防火牆要開的 port
+ufw_allowed_ports:
+  - "22"
+  - "80"
+  - "443"
+
+# SFTP 使用者(只能 SFTP,不能 SSH;被 chroot 鎖在 /home/<name> 裡)
+# 連進去後會看到 /upload 資料夾,檔案上傳到那裡
+sftp_users: []
+  # - name: client1
+  #   authorized_keys:
+  #     - "ssh-ed25519 AAAA... client1@laptop"
+  # - name: backup-bot
+  #   authorized_keys:
+  #     - "ssh-rsa AAAA... backup-server"
