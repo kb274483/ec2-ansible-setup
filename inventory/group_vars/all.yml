@@ -1,0 +1,72 @@
+---
+# 全域變數（所有 host 都吃得到）
+
+# 時區
+timezone: "Asia/Taipei"
+
+# 要建立的部署使用者
+# 注意:docker 群組會由 docker role 在 Docker 裝完後自動加入,不要寫在這
+deploy_user: deploy
+deploy_user_groups:
+  - sudo
+
+# 公鑰（會放進 deploy 使用者的 ~/.ssh/authorized_keys）
+# 多把就一行一把
+deploy_authorized_keys:
+  - ""
+  # - "ssh-ed25519 AAAA... your_key_comment"
+
+# Swap 檔案大小（GB），設 0 就不建立
+swap_size_gb: 2
+
+# Node.js 版本（NodeSource 支援 18 / 20 / 22）
+nodejs_version: "23"
+# 全域要裝的 npm 套件
+nodejs_global_packages:
+  - pm2
+  - yarn
+
+# Nginx
+nginx_default_server_name: "_"
+
+# 防火牆要開的 port
+ufw_allowed_ports:
+  - "22"
+  - "80"
+  - "443"
+
+# 團隊成員(每人一個 Linux 帳號)
+#
+# 欄位說明:
+#   name              帳號名稱(必填,英數字小寫)
+#   authorized_keys   SSH 公鑰清單(必填)
+#   sudo              是否給 sudo 權限(true/false,預設 false)
+#   groups            額外加入的群組(例如 docker、可進 docker 不用 sudo)
+#   shell             登入 shell(預設 /bin/bash)
+#   state             present(預設,建立)/ absent(刪除帳號,離職用)
+#
+# 連線方式(設好後成員用自己的 key):
+#   ssh <name>@<EC2_IP>
+team_members: 
+  # - name: alice
+  #   sudo: true
+  #   groups: [docker]
+  #   authorized_keys:
+  #     - "ssh-ed25519 AAAA... alice@laptop"
+  #
+  # - name: bob
+  #   sudo: false                    # bob 沒有 sudo 權限,只能讀
+  #   groups: [docker]               # 但可以執行 docker 指令
+  #   authorized_keys:
+  #     - "ssh-ed25519 AAAA... bob@desktop"
+  #
+  # - name: charlie                  # charlie 離職了,設 absent 會刪掉帳號
+  #   state: absent
+  #   authorized_keys: []
+
+# SFTP 使用者(只能 SFTP,不能 SSH;被 chroot 鎖在 /home/<name> 裡)
+# 連進去後會看到 /upload 資料夾,檔案上傳到那裡
+sftp_users:
+  # - name: backup-bot
+  #   authorized_keys:
+  #     - "ssh-rsa AAAA... backup-server"

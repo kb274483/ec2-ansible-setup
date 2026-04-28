@@ -1,0 +1,75 @@
+---
+# team:建立團隊成員的個人帳號
+#
+# 設計:每個成員一個 Linux 帳號 + 自己的 SSH key
+#  - state: present  → 建立或保留(預設)
+#  - state: absent   → 刪除帳號(離職時用)
+#  - sudo: true      → 加進 sudo 群組(免密碼 sudo)
+#  - groups: [...]   → 額外加入的群組(例如 docker)
+#  - shell:          → 預設 /bin/bash,可改 /usr/sbin/nologin
+
+- name: Ensure team members groups exist
+  ansible.builtin.group:
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ team_members }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - team_members | length > 0
+    - item.state | default('present') == 'present'
+
+- name: Create team member accounts
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    group: "{{ item.name }}"
+    groups: "{{ (item.groups | default([])) + (['sudo'] if item.sudo | default(false) else []) }}"
+    append: true
+    shell: "{{ item.shell | default('/bin/bash') }}"
+    create_home: true
+    state: "{{ item.state | default('present') }}"
+    remove: "{{ item.state | default('present') == 'absent' }}"
+  loop: "{{ team_members }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: team_members | length > 0
+
+- name: Allow passwordless sudo for sudo-enabled members
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/team-{{ item.name }}"
+    content: "{{ item.name }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+  loop: "{{ team_members }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - team_members | length > 0
+    - item.state | default('present') == 'present'
+    - item.sudo | default(false)
+
+- name: Remove sudoers file for absent members
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/team-{{ item.name }}"
+    state: absent
+  loop: "{{ team_members }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - team_members | length > 0
+    - item.state | default('present') == 'absent'
+
+- name: Add SSH authorized keys for team members
+  ansible.posix.authorized_key:
+    user: "{{ item.0.name }}"
+    key: "{{ item.1 }}"
+    state: present
+    exclusive: false
+  loop: "{{ team_members | subelements('authorized_keys', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }}"
+  when:
+    - team_members | length > 0
+    - item.0.state | default('present') == 'present'

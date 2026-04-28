@@ -10,6 +10,9 @@
     - role: common
       tags: [common]
 
+    - role: team
+      tags: [team, users]
+
     - role: security
       tags: [security, firewall]
 

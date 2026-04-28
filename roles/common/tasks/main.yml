@@ -24,12 +24,21 @@
       - lsb-release
       - software-properties-common
       - build-essential
-      - python3-pip
     state: present
 
 - name: Set timezone
   community.general.timezone:
     name: "{{ timezone }}"
+
+# 預先建立常用服務群組,讓後續 role(team / deploy 等)可以指派使用者進去。
+# 對應的服務(Docker / Nginx)安裝時會偵測到已存在,直接重用,不會衝突。
+- name: Pre-create service groups (docker / www-data) for user assignment
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - docker
+    - www-data
 
 - name: Ensure deploy group exists
   ansible.builtin.group:

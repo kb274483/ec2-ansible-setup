@@ -15,10 +15,11 @@
   - [情境 1:設定一台全新 EC2](#情境-1設定一台全新-ec2)
   - [情境 2:對既有機器追加設定](#情境-2對既有機器追加設定)
   - [情境 3:替換 / 部署 SSL 憑證(GoDaddy)](#情境-3替換--部署-ssl-憑證godaddy)
-  - [情境 4:新增 SFTP 使用者](#情境-4新增-sftp-使用者)
-  - [情境 5:同時管理多台機器](#情境-5同時管理多台機器)
-  - [情境 6:臨時對機器下指令](#情境-6臨時對機器下指令)
-  - [情境 7:查稽核 log](#情境-7查稽核-log)
+  - [情境 4:新增 / 移除團隊成員帳號](#情境-4新增--移除團隊成員帳號)
+  - [情境 5:新增 SFTP 使用者](#情境-5新增-sftp-使用者)
+  - [情境 6:同時管理多台機器](#情境-6同時管理多台機器)
+  - [情境 7:臨時對機器下指令](#情境-7臨時對機器下指令)
+  - [情境 8:查稽核 log](#情境-8查稽核-log)
 - [Playbook 對照表](#playbook-對照表)
 - [Role 對照表](#role-對照表)
 - [變數速查](#變數速查)
@@ -35,16 +36,16 @@
 
 | 系統 | 支援 | 備註 |
 |---|---|---|
-| **Ubuntu 22.04 LTS** | ✅ | 推薦,主要測試對象 |
-| **Ubuntu 24.04 LTS** | ✅ | 也可以 |
-| **Ubuntu 20.04 LTS** | ✅ | 仍可用 |
+| **Ubuntu 24.04 LTS** | ✅ | 推薦(最新,支援到 2029) |
+| **Ubuntu 22.04 LTS** | ✅ | 主要測試對象,支援到 2027 |
+| **Ubuntu 20.04 LTS** | ✅ | 仍可用,支援到 2025 |
 | **Debian 11 / 12** | ✅ | 同生態 |
 | **Amazon Linux 2 / 2023** | ❌ | 用 dnf,不相容 |
 | **CentOS / RHEL / Rocky** | ❌ | 用 dnf + firewalld |
 | **Alpine** | ❌ | 用 apk |
 
 > ⚠️ **開 EC2 時請選 Ubuntu AMI**,AWS 預設是 Amazon Linux,跑不起來。
-> 推薦選 **Ubuntu Server 22.04 LTS**(支援到 2027 年)。
+> 推薦選 **Ubuntu Server 24.04 LTS**(最新 LTS,支援到 2029 年)。
 
 ### 本機(control node,你下指令的這台電腦)
 
@@ -80,7 +81,7 @@ cp inventory/hosts.ini.example inventory/hosts.ini
 
 # 4. 編輯 inventory/hosts.ini,填入你的 EC2 IP / 金鑰路徑
 
-# 5. 編輯 group_vars/all.yml,填入你的 SSH 公鑰(deploy_authorized_keys)
+# 5. 編輯 inventory/group_vars/all.yml,填入你的 SSH 公鑰(deploy_authorized_keys)
 
 # 6. 測試連線
 ansible all -m ping
@@ -100,10 +101,9 @@ ServerSetting/
 │
 ├── inventory/
 │   ├── hosts.ini.example          # 機器清單範本(進 git)
-│   └── hosts.ini                  # 實際清單(不進 git,自己建立)
-│
-├── group_vars/
-│   └── all.yml                    # 全域變數(時區、使用者、套件版本...)
+│   ├── hosts.ini                  # 實際清單(不進 git,自己建立)
+│   └── group_vars/
+│       └── all.yml                # 全域變數(時區、使用者、套件版本...)
 │
 ├── certs/                         # SSL 憑證暫存區(不進 git)
 │   ├── README.md
@@ -142,7 +142,7 @@ ServerSetting/
 #    new-server ansible_host=54.123.45.67 ansible_user=ubuntu \
 #               ansible_ssh_private_key_file=~/.ssh/aws-key.pem
 
-# 2. 確認 group_vars/all.yml 的設定符合需求
+# 2. 確認 inventory/group_vars/all.yml 的設定符合需求
 #    (時區、Node 版本、要開的 port、SSH 公鑰...)
 
 # 3. Dry run:看會改什麼,不實際執行
@@ -190,7 +190,7 @@ ansible-playbook playbooks/site.yml --tags security,audit
 | `sftp` | SFTP |
 
 ```bash
-# 只升級 Node 版本(改完 group_vars/all.yml 的 nodejs_version 後跑)
+# 只升級 Node 版本(改完 inventory/group_vars/all.yml 的 nodejs_version 後跑)
 ansible-playbook playbooks/site.yml --tags nodejs
 
 # 只重新套用 nginx 設定
@@ -253,11 +253,73 @@ ansible-playbook playbooks/deploy-ssl.yml \
 
 ---
 
-### 情境 4:新增 SFTP 使用者
+### 情境 4:新增 / 移除團隊成員帳號
+
+每個團隊成員一個獨立 Linux 帳號(audit 友善、權限細緻、離職好處理)。
+
+#### 新增成員
+
+編輯 [inventory/group_vars/all.yml](inventory/group_vars/all.yml) 的 `team_members`:
+
+```yaml
+team_members:
+  - name: alice
+    sudo: true                       # 有 sudo
+    groups: [docker]
+    authorized_keys:
+      - "ssh-ed25519 AAAA... alice@laptop"
+
+  - name: bob
+    sudo: false                      # 沒 sudo,只能執行有限操作
+    groups: [docker]                 # 但能跑 docker 指令
+    authorized_keys:
+      - "ssh-ed25519 AAAA... bob@desktop"
+```
+
+套用:
+
+```bash
+ansible-playbook playbooks/site.yml --tags team
+```
+
+#### 移除成員(離職)
+
+把該成員的 `state` 改成 `absent`:
+
+```yaml
+team_members:
+  - name: charlie
+    state: absent          # ← 帳號 + 家目錄都會被刪除
+    authorized_keys: []
+```
+
+```bash
+ansible-playbook playbooks/site.yml --tags team
+```
+
+#### 連線
+
+```bash
+ssh alice@<EC2_IP>          # 用 alice 自己的 SSH key
+```
+
+#### 三種帳號的角色
+
+| 帳號 | 用途 | 怎麼來的 |
+|---|---|---|
+| `ubuntu` | AWS Ubuntu AMI 預設,Ansible 用來連線提權 | AWS 預設 |
+| `deploy` | 部署 / 自動化用的服務帳號 | `common` role 建立 |
+| `alice` / `bob` 等 | **真人團隊成員**的個人帳號 | `team` role 建立(本情境) |
+
+audit log 都會分別記錄,可以用 `sudo ausearch -ua alice` 查特定成員行為。
+
+---
+
+### 情境 5:新增 SFTP 使用者
 
 #### 步驟
 
-1. 編輯 [group_vars/all.yml](group_vars/all.yml),在 `sftp_users` 加上新使用者:
+1. 編輯 [inventory/group_vars/all.yml](inventory/group_vars/all.yml),在 `sftp_users` 加上新使用者:
 
    ```yaml
    sftp_users:
@@ -298,7 +360,7 @@ sftp> put myfile.zip
 
 ---
 
-### 情境 5:同時管理多台機器
+### 情境 6:同時管理多台機器
 
 **不用對每台機器各跑一次。** 在 inventory 列上去就好:
 
@@ -331,7 +393,7 @@ ansible-playbook playbooks/site.yml --limit 'web:!prod-3'
 
 ---
 
-### 情境 6:臨時對機器下指令
+### 情境 7:臨時對機器下指令
 
 不寫 playbook,**像批次 SSH 一樣下單次指令**:
 
@@ -359,7 +421,7 @@ ansible all -m copy -a "src=./local-file dest=/tmp/file" --become
 
 ---
 
-### 情境 7:查稽核 log
+### 情境 8:查稽核 log
 
 `audit` role 會記錄系統行為。實際查詢都在 EC2 上:
 
@@ -406,7 +468,7 @@ sudo cat /home/deploy/.bash_history
 
 ## Role 對照表
 
-| Role | 功能 | 預設啟用? | 對應變數(`group_vars/all.yml`) |
+| Role | 功能 | 預設啟用? | 對應變數(`inventory/group_vars/all.yml`) |
 |---|---|---|---|
 | `common` | 系統更新、時區、deploy 使用者、swap | ✅ | `timezone` / `deploy_user` / `deploy_authorized_keys` / `swap_size_gb` |
 | `security` | UFW + fail2ban | ✅ | `ufw_allowed_ports` |
@@ -423,7 +485,7 @@ sudo cat /home/deploy/.bash_history
 
 ## 變數速查
 
-打開 [group_vars/all.yml](group_vars/all.yml) 編輯:
+打開 [inventory/group_vars/all.yml](inventory/group_vars/all.yml) 編輯:
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
@@ -470,7 +532,7 @@ EC2 流量要通,**必須兩道都開**:
 
 ### Secrets 管理
 
-Production 用的密碼 / API key 不要直接寫在 `group_vars/all.yml`,用 [Ansible Vault](https://docs.ansible.com/ansible/latest/vault_guide/index.html):
+Production 用的密碼 / API key 不要直接寫在 `inventory/group_vars/all.yml`,用 [Ansible Vault](https://docs.ansible.com/ansible/latest/vault_guide/index.html):
 
 ```bash
 # 加密
